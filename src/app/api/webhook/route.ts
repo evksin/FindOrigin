@@ -1,6 +1,7 @@
 import { extractFacts } from "@/lib/facts";
 import { resolveInputText, extractMessageText } from "@/lib/input";
-import { findCandidateSources } from "@/lib/sources";
+import { searchGoogle } from "@/lib/google-search";
+import { analyzeWithOpenAi } from "@/lib/openai";
 import { sendTelegramMessage } from "@/lib/telegram";
 
 type TelegramUpdate = {
@@ -31,30 +32,41 @@ export async function POST(request: Request): Promise<Response> {
 
   const resolved = await resolveInputText(inputText);
   const facts = extractFacts(resolved.text);
-  const candidates = findCandidateSources(facts);
 
-  const reply = buildReply(resolved, facts, candidates.sources);
-  await safeSend(chatId, reply);
+  const query = buildSearchQuery(resolved.text, facts);
+
+  try {
+    const searchResults = await searchGoogle(query);
+    const analysis = await analyzeWithOpenAi(
+      resolved.text,
+      facts,
+      searchResults,
+    );
+    const reply = buildReply(resolved, analysis);
+    await safeSend(chatId, reply);
+  } catch (error) {
+    console.error("Pipeline failed", error);
+    await safeSend(
+      chatId,
+      "Не удалось завершить анализ. Проверьте настройки Google Search API и OpenAI.",
+    );
+  }
 
   return new Response("ok", { status: 200 });
 }
 
 type BuildReplyInput = {
-  text: string;
-  originalText: string;
   usedTelegramFetch: boolean;
   telegramLink?: { url: string };
 };
 
-type BuildReplyFacts = ReturnType<typeof extractFacts>;
+type BuildReplyAnalysis = Awaited<ReturnType<typeof analyzeWithOpenAi>>;
 
 function buildReply(
   input: BuildReplyInput,
-  facts: BuildReplyFacts,
-  sources: string[],
+  analysis: BuildReplyAnalysis,
 ): string {
   const lines: string[] = [
-    "Предварительный разбор (без AI-анализа).",
     input.usedTelegramFetch
       ? "Текст извлечен из Telegram-поста."
       : input.telegramLink
@@ -63,36 +75,27 @@ function buildReply(
     "",
   ];
 
-  if (facts.claims.length > 0) {
-    lines.push("Ключевые утверждения:");
-    lines.push(...facts.claims.map((claim, index) => `${index + 1}. ${claim}`));
-  } else {
-    lines.push("Ключевые утверждения: не найдены.");
+  if (analysis.summary) {
+    lines.push("Краткий вывод:");
+    lines.push(analysis.summary.trim());
+    lines.push("");
   }
 
-  lines.push("");
-  lines.push(`Даты: ${formatList(facts.dates)}`);
-  lines.push(`Числа: ${formatList(facts.numbers)}`);
-  lines.push(`Имена: ${formatList(facts.names)}`);
-  lines.push(`Ссылки: ${formatList(facts.links)}`);
-  lines.push("");
-
-  if (sources.length > 0) {
+  if (analysis.sources.length > 0) {
     lines.push("Возможные источники:");
-    lines.push(...sources.slice(0, 3).map((link) => `- ${link}`));
+    for (const source of analysis.sources) {
+      lines.push(
+        `- ${source.title || source.url} (${formatConfidence(
+          source.confidence,
+        )})`,
+      );
+      lines.push(`  ${source.url}`);
+    }
   } else {
-    lines.push("Возможные источники: пока нет ссылок для источников.");
+    lines.push("Возможные источники: не найдены.");
   }
 
   return truncateMessage(lines.join("\n"));
-}
-
-function formatList(items: string[]): string {
-  if (items.length === 0) {
-    return "нет";
-  }
-
-  return items.slice(0, 5).join(", ");
 }
 
 function truncateMessage(text: string): string {
@@ -101,6 +104,30 @@ function truncateMessage(text: string): string {
     return text;
   }
   return `${text.slice(0, limit - 1)}…`;
+}
+
+function buildSearchQuery(
+  text: string,
+  facts: ReturnType<typeof extractFacts>,
+): string {
+  const parts: string[] = [];
+  parts.push(...facts.names.slice(0, 3));
+  parts.push(...facts.dates.slice(0, 2));
+  parts.push(...facts.numbers.slice(0, 2));
+
+  if (facts.claims.length > 0) {
+    parts.push(facts.claims[0]);
+  } else {
+    parts.push(text);
+  }
+
+  const query = parts.join(" ").replace(/\s+/g, " ").trim();
+  return query.slice(0, 256);
+}
+
+function formatConfidence(value: number): string {
+  const percent = Math.round(value * 100);
+  return `${percent}%`;
 }
 
 async function safeSend(chatId: number, text: string): Promise<void> {
