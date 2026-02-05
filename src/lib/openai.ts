@@ -99,14 +99,15 @@ export async function analyzeWithOpenAi(
     };
   }
 
-  return normalizeAnalysis(parsed);
+  return normalizeAnalysis(parsed, facts.links);
 }
 
 function buildPrompt(text: string, facts: ExtractedFacts): string {
   const lines: string[] = [
     "Ты помощник по поиску первоисточников.",
-    "Сравни смысл исходного текста и предложи 1–3 наиболее вероятных источника.",
-    "Если точные источники неизвестны, честно укажи это и предложи направления поиска.",
+    "Сравни смысл исходного текста и предложи краткий вывод.",
+    "Не выдумывай источники. Используй только ссылки, которые есть в исходном тексте.",
+    "Если ссылок нет, верни пустой список sources.",
     "",
     "Исходный текст:",
     text,
@@ -173,7 +174,11 @@ function parseJsonFromText(text: string): AiAnalysis | null {
   }
 }
 
-function normalizeAnalysis(data: AiAnalysis): AiAnalysis {
+function normalizeAnalysis(
+  data: AiAnalysis,
+  allowedUrls: string[],
+): AiAnalysis {
+  const allowed = new Set(allowedUrls.map((url) => url.trim()));
   const sources = Array.isArray(data.sources) ? data.sources : [];
   return {
     summary: typeof data.summary === "string" ? data.summary : "",
@@ -185,7 +190,9 @@ function normalizeAnalysis(data: AiAnalysis): AiAnalysis {
         confidence: clamp(Number(source.confidence ?? 0)),
         reason: String(source.reason ?? "").trim(),
       }))
-      .filter((source) => source.url.length > 0)
+      .filter(
+        (source) => source.url.length > 0 && allowed.has(source.url),
+      )
       .slice(0, 3),
   };
 }
