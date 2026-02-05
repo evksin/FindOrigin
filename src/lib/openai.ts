@@ -1,5 +1,4 @@
 import type { ExtractedFacts } from "./facts";
-import type { GoogleSearchItem } from "./google-search";
 
 export type AiSource = {
   title: string;
@@ -20,7 +19,6 @@ type OpenAiResponse = {
 export async function analyzeWithOpenAi(
   text: string,
   facts: ExtractedFacts,
-  searchResults: GoogleSearchItem[],
 ): Promise<AiAnalysis> {
   const apiKey =
     process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY;
@@ -34,7 +32,7 @@ export async function analyzeWithOpenAi(
     process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
   const endpoint = `${baseUrl.replace(/\/$/, "")}/responses`;
 
-  const input = buildPrompt(text, facts, searchResults);
+  const input = buildPrompt(text, facts);
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -98,15 +96,11 @@ export async function analyzeWithOpenAi(
   return normalizeAnalysis(parsed);
 }
 
-function buildPrompt(
-  text: string,
-  facts: ExtractedFacts,
-  searchResults: GoogleSearchItem[],
-): string {
+function buildPrompt(text: string, facts: ExtractedFacts): string {
   const lines: string[] = [
     "Ты помощник по поиску первоисточников.",
-    "Сравни смысл исходного текста с найденными результатами и выбери 1–3 наиболее вероятных источника.",
-    "Не выдумывай источники. Используй только то, что есть в результатах поиска.",
+    "Сравни смысл исходного текста и предложи 1–3 наиболее вероятных источника.",
+    "Если точные источники неизвестны, честно укажи это и предложи направления поиска.",
     "",
     "Исходный текст:",
     text,
@@ -117,12 +111,6 @@ function buildPrompt(
     `Числа: ${facts.numbers.join(", ") || "нет"}`,
     `Имена: ${facts.names.join(", ") || "нет"}`,
     `Ссылки: ${facts.links.join(", ") || "нет"}`,
-    "",
-    "Результаты поиска:",
-    ...searchResults.map(
-      (item, index) =>
-        `${index + 1}. ${item.title}\n${item.link}\n${item.snippet}`,
-    ),
   ];
 
   return lines.join("\n");

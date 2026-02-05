@@ -1,6 +1,5 @@
 import { extractFacts } from "@/lib/facts";
 import { resolveInputText, extractMessageText } from "@/lib/input";
-import { searchGoogle } from "@/lib/google-search";
 import { analyzeWithOpenAi } from "@/lib/openai";
 import { sendTelegramMessage } from "@/lib/telegram";
 
@@ -33,22 +32,15 @@ export async function POST(request: Request): Promise<Response> {
   const resolved = await resolveInputText(inputText);
   const facts = extractFacts(resolved.text);
 
-  const query = buildSearchQuery(resolved.text, facts);
-
   try {
-    const searchResults = await searchGoogle(query);
-    const analysis = await analyzeWithOpenAi(
-      resolved.text,
-      facts,
-      searchResults,
-    );
+    const analysis = await analyzeWithOpenAi(resolved.text, facts);
     const reply = buildReply(resolved, analysis);
     await safeSend(chatId, reply);
   } catch (error) {
     console.error("Pipeline failed", error);
     await safeSend(
       chatId,
-      "Не удалось завершить анализ. Проверьте настройки Google Search API и OpenAI.",
+      "Не удалось завершить анализ. Проверьте настройки OpenAI.",
     );
   }
 
@@ -104,25 +96,6 @@ function truncateMessage(text: string): string {
     return text;
   }
   return `${text.slice(0, limit - 1)}…`;
-}
-
-function buildSearchQuery(
-  text: string,
-  facts: ReturnType<typeof extractFacts>,
-): string {
-  const parts: string[] = [];
-  parts.push(...facts.names.slice(0, 3));
-  parts.push(...facts.dates.slice(0, 2));
-  parts.push(...facts.numbers.slice(0, 2));
-
-  if (facts.claims.length > 0) {
-    parts.push(facts.claims[0]);
-  } else {
-    parts.push(text);
-  }
-
-  const query = parts.join(" ").replace(/\s+/g, " ").trim();
-  return query.slice(0, 256);
 }
 
 function formatConfidence(value: number): string {
