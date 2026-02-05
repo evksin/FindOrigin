@@ -12,8 +12,20 @@ export type AiAnalysis = {
   summary: string;
 };
 
-type OpenAiResponse = {
+type ChatCompletionResponse = {
+  choices?: Array<{
+    message?: { content?: string };
+  }>;
+};
+
+type ResponsesApiResponse = {
   output_text?: string;
+  output?: Array<{
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
+  }>;
 };
 
 export async function analyzeWithOpenAi(
@@ -30,49 +42,41 @@ export async function analyzeWithOpenAi(
 
   const baseUrl =
     process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/responses`;
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+  const endpoint = `${normalizedBaseUrl}/chat/completions`;
+  const model =
+    process.env.OPENAI_MODEL ??
+    (normalizedBaseUrl.includes("openrouter.ai")
+      ? "openai/gpt-4o-mini"
+      : "gpt-4o-mini");
 
   const input = buildPrompt(text, facts);
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Отвечай строго JSON-объектом с полями summary (строка) и sources (массив до 3 объектов). " +
+          "Каждый объект источника: title, url, confidence (0..1), reason. " +
+          "Никакого текста вне JSON.",
+      },
+      { role: "user", content: input },
+    ],
+    temperature: 0.2,
+  };
+
+  if (normalizedBaseUrl.includes("api.openai.com")) {
+    body.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      input,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "findorigin_result",
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              summary: { type: "string" },
-              sources: {
-                type: "array",
-                minItems: 0,
-                maxItems: 3,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    title: { type: "string" },
-                    url: { type: "string" },
-                    confidence: { type: "number", minimum: 0, maximum: 1 },
-                    reason: { type: "string" },
-                  },
-                  required: ["title", "url", "confidence", "reason"],
-                },
-              },
-            },
-            required: ["summary", "sources"],
-          },
-        },
-      },
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -82,8 +86,10 @@ export async function analyzeWithOpenAi(
     );
   }
 
-  const data = (await response.json()) as OpenAiResponse;
-  const rawText = data.output_text ?? "";
+  const data = (await response.json()) as
+    | ChatCompletionResponse
+    | ResponsesApiResponse;
+  const rawText = extractResponseText(data);
   const parsed = safeParseJson(rawText);
 
   if (!parsed) {
@@ -116,9 +122,52 @@ function buildPrompt(text: string, facts: ExtractedFacts): string {
   return lines.join("\n");
 }
 
+function extractResponseText(
+  data: ChatCompletionResponse | ResponsesApiResponse,
+): string {
+  if ("output_text" in data && typeof data.output_text === "string") {
+    return data.output_text;
+  }
+
+  if ("output" in data && Array.isArray(data.output)) {
+    const chunks = data.output.flatMap(
+      (item) =>
+        item.content?.map((content) => content.text ?? "") ?? [],
+    );
+    const combined = chunks.join("").trim();
+    if (combined) {
+      return combined;
+    }
+  }
+
+  const content =
+    "choices" in data
+      ? data.choices?.[0]?.message?.content ?? ""
+      : "";
+  return typeof content === "string" ? content : "";
+}
+
 function safeParseJson(text: string): AiAnalysis | null {
+  if (!text) {
+    return null;
+  }
+
   try {
     return JSON.parse(text) as AiAnalysis;
+  } catch {
+    return parseJsonFromText(text);
+  }
+}
+
+function parseJsonFromText(text: string): AiAnalysis | null {
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first === -1 || last === -1 || last <= first) {
+    return null;
+  }
+  const snippet = text.slice(first, last + 1);
+  try {
+    return JSON.parse(snippet) as AiAnalysis;
   } catch {
     return null;
   }
