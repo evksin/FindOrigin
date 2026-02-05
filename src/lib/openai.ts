@@ -22,13 +22,20 @@ export async function analyzeWithOpenAi(
   facts: ExtractedFacts,
   searchResults: GoogleSearchItem[],
 ): Promise<AiAnalysis> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey =
+    process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
+    throw new Error(
+      "OPENAI_API_KEY or OPENROUTER_API_KEY is not set",
+    );
   }
 
+  const baseUrl =
+    process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/responses`;
+
   const input = buildPrompt(text, facts, searchResults);
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -16,11 +16,15 @@ export async function searchGoogle(
   query: string,
   options?: { timeoutMs?: number },
 ): Promise<GoogleSearchItem[]> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  const cx = process.env.GOOGLE_CX;
+  const apiKey =
+    process.env.GOOGLE_API_KEY ?? process.env.SEARCH_API_KEY;
+  const cx =
+    process.env.GOOGLE_CX ?? process.env.GOOGLE_CSE_ID;
 
   if (!apiKey || !cx) {
-    throw new Error("GOOGLE_API_KEY or GOOGLE_CX is not set");
+    throw new Error(
+      "GOOGLE_API_KEY/SEARCH_API_KEY or GOOGLE_CX/GOOGLE_CSE_ID is not set",
+    );
   }
 
   const params = new URLSearchParams({
