@@ -77,11 +77,8 @@ function buildReply(
     lines.push("Возможные источники:");
     for (const source of analysis.sources) {
       lines.push(
-        `- ${source.title || source.url} (${formatConfidence(
-          source.confidence,
-        )})`,
+        `- ${source.url} (${formatConfidence(source.confidence)})`,
       );
-      lines.push(`  ${source.url}`);
     }
   } else {
     lines.push("Возможные источники: не найдены.");
